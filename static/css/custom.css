@@ -1,0 +1,32 @@
+/* Minimal custom styles to complement Bootstrap */
+.card {
+    border-radius: 0.5rem;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+}
+
+.list-group-item {
+    border-left: none;
+    border-right: none;
+}
+
+.list-group-item:first-child {
+    border-top: none;
+}
+
+.list-group-item:last-child {
+    border-bottom: none;
+}
+
+/* Ensure links are visible in dark mode */
+a {
+    color: var(--bs-info);
+}
+
+a:hover {
+    color: var(--bs-info-text);
+}
+
+/* Custom loading spinner colors */
+.spinner-border {
+    color: var(--bs-light);
+}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5 class="card-title mb-0">Track Amazon Product Price</h5>
+            </div>
+            <div class="card-body">
+                <form id="trackForm" action="{{ url_for('track_price') }}" method="POST">
+                    <div class="mb-3">
+                        <label for="amazon_url" class="form-label">Amazon Product URL</label>
+                        <input type="url" class="form-control" id="amazon_url" name="amazon_url" required
+                               placeholder="https://www.amazon.com/product">
+                    </div>
+                    <div class="mb-3">
+                        <label for="email" class="form-label">Email Address</label>
+                        <input type="email" class="form-control" id="email" name="email" required
+                               placeholder="your@email.com">
+                    </div>
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="min_price" class="form-label">Minimum Price Alert (₹)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" id="min_price" name="min_price"
+                                   placeholder="Optional">
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="max_price" class="form-label">Maximum Price Alert (₹)</label>
+                            <input type="number" step="0.01" min="0" class="form-control" id="max_price" name="max_price"
+                                   placeholder="Optional">
+                        </div>
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button type="submit" class="btn btn-primary" id="trackButton">
+                            <span class="spinner-border spinner-border-sm d-none" role="status" aria-hidden="true"></span>
+                            Track Price
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <div class="card mt-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">Tracked Products</h5>
+                <button class="btn btn-danger btn-sm" id="clearAllBtn">Clear All</button>
+            </div>
+            <div class="card-body">
+                {% if products %}
+                    <div class="list-group">
+                        {% for product in products %}
+                            <div class="list-group-item">
+                                <div class="d-flex w-100 justify-content-between">
+                                    <h6 class="mb-1">Product URL</h6>
+                                    <small>Last Price: ₹{{ "%.2f"|format(product.last_price) }}</small>
+                                </div>
+                                <p class="mb-1"><a href="{{ product.url }}" target="_blank">{{ product.url }}</a></p>
+                                <small>Email: {{ product.email }}</small>
+                                {% if product.min_price or product.max_price %}
+                                    <div class="mt-1">
+                                        {% if product.min_price %}
+                                            <span class="badge bg-info me-2">Min: ₹{{ "%.2f"|format(product.min_price) }}</span>
+                                        {% endif %}
+                                        {% if product.max_price %}
+                                            <span class="badge bg-info">Max: ₹{{ "%.2f"|format(product.max_price) }}</span>
+                                        {% endif %}
+                                    </div>
+                                {% endif %}
+                            </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <p class="text-muted text-center mb-0">No products being tracked</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
