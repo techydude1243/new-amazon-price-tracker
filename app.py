@@ -41,8 +41,8 @@ db.init_app(app)
 # Import models after db initialization
 from models import Product
 
-with app.app_context():
-    db.create_all()
+# with app.app_context():
+#     db.create_all()
 
 def validate_email(email):
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
