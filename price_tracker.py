@@ -8,91 +8,65 @@ logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %
 
 def check_price(url):
     """
-    Fetch current price from Amazon.in using requests + BeautifulSoup.
-    Updated selectors for 2026 layouts + fallback regex.
+    Fetch Amazon product price using ScraperAPI (bypasses blocks & proxy issues).
     """
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Referer': 'https://www.amazon.in/',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
+    api_key = os.getenv('SCRAPERAPI_KEY')
+    if not api_key:
+        logging.error("SCRAPERAPI_KEY not found")
+        raise ValueError("ScraperAPI key is missing")
+
+    # ScraperAPI base URL
+    scraper_url = "http://api.scraperapi.com"
+    params = {
+        'api_key': api_key,
+        'url': url,
+        'render': 'false',  # Set to 'true' if page needs JavaScript (costs 10 credits)
+        'premium': 'true',  # Optional: better proxies for Amazon (costs more credits)
     }
 
     try:
-        logging.info(f"Scraping price from: {url}")
-        response = requests.get(url, headers=headers, timeout=20)
+        logging.info(f"Scraping via ScraperAPI: {url}")
+        response = requests.get(scraper_url, params=params, timeout=30)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # 2026-updated selectors for Amazon.in (tested on real pages)
-        selectors = [
-            'span.a-price-whole',                              # Whole rupees
-            'span.a-price-fraction',                           # Paise (decimal)
-            '#corePrice_feature_div span.a-offscreen',         # Primary modern price
-            '#corePriceDisplay_feature_div span.a-offscreen',  # Variant
-            '.a-price span.a-offscreen',                       # Common fallback
-            '#priceblock_ourprice',                            # Older pages
-            '#priceblock_dealprice',                           # Deal price
-            'span.apexPriceToPay',                             # Apex block
-            '.a-price-symbol + span.a-price-whole',            # Symbol + whole
-        ]
+        # Current selectors for Amazon.in (2026 layouts)
+        price_elem = soup.select_one('#corePrice_feature_div .a-offscreen') or \
+                     soup.select_one('.a-price .a-offscreen') or \
+                     soup.select_one('span.a-price-whole') or \
+                     soup.select_one('#priceblock_ourprice') or \
+                     soup.select_one('span.apexPriceToPay')
 
-        price_whole = None
-        price_fraction = None
+        if not price_elem:
+            # Fallback regex if selectors fail
+            price_match = re.search(r'₹[\s]*?([\d,]+(?:\.\d{1,2})?)', response.text)
+            if price_match:
+                price_text = price_match.group(1).replace(',', '')
+            else:
+                logging.error("No price found even with regex")
+                raise ValueError("Could not locate price")
+        else:
+            price_text = price_elem.get_text(strip=True).replace('₹', '').replace(',', '').strip()
 
-        # First try structured selectors
-        for sel in selectors:
-            elem = soup.select_one(sel)
-            if elem:
-                text = elem.get_text(strip=True)
-                if 'whole' in sel or 'whole' in elem.get('class', []):
-                    price_whole = text
-                elif 'fraction' in sel or 'fraction' in elem.get('class', []):
-                    price_fraction = text
-                else:
-                    # Full price in one element
-                    full_text = text.replace('₹', '').replace(',', '').strip()
-                    if full_text.replace('.', '').isdigit():
-                        price = float(full_text)
-                        logging.info(f"Found full price: ₹{price}")
-                        return price
+        # Handle decimal part if separate
+        fraction = soup.select_one('span.a-price-fraction')
+        if fraction and '.' not in price_text:
+            price_text += '.' + fraction.get_text(strip=True).zfill(2)
 
-        # Combine whole + fraction if found separately
-        if price_whole and price_fraction:
-            price_text = f"{price_whole}.{price_fraction.zfill(2)}"
-            price = float(price_text)
-            logging.info(f"Combined price: ₹{price}")
-            return price
+        price = float(price_text)
+        logging.info(f"Price via ScraperAPI: ₹{price}")
+        return price
 
-        # Fallback: regex search in entire page (very reliable)
-        price_match = re.search(r'₹[\s]*?([\d,]+(?:\.\d{1,2})?)', response.text)
-        if price_match:
-            price_text = price_match.group(1).replace(',', '')
-            price = float(price_text)
-            logging.info(f"Regex fallback found price: ₹{price}")
-            return price
-
-        # If nothing works
-        logging.error(f"No price found on {url}")
-        logging.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
-        raise ValueError("Could not locate price on Amazon page")
-
-    except requests.Timeout:
-        logging.error(f"Timeout fetching {url}")
-        raise Exception("Request timed out")
     except requests.RequestException as e:
-        logging.error(f"Request failed for {url}: {str(e)}")
-        raise Exception(f"Failed to load page: {str(e)}")
+        logging.error(f"ScraperAPI request failed: {str(e)}")
+        raise
     except ValueError as e:
-        logging.error(f"Price parsing error: {str(e)}")
+        logging.error(f"Price parsing failed: {str(e)}")
         raise
     except Exception as e:
-        logging.exception(f"Unexpected error for {url}")
+        logging.exception(f"Unexpected ScraperAPI error")
         raise
-
 
 # ────────────────────────────────────────────────
 #           Brevo API Email Sending Functions
