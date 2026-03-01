@@ -4,92 +4,93 @@ from bs4 import BeautifulSoup
 import logging
 import re
 
-# Configure logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
 def check_price(url):
     """
-    Fetch current price from Amazon.in product page using requests + BeautifulSoup.
-    Works reliably on PythonAnywhere free tier (no Selenium/browser required).
+    Fetch current price from Amazon.in using requests + BeautifulSoup.
+    Updated selectors for 2026 layouts + fallback regex.
     """
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
         'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
         'Referer': 'https://www.amazon.in/',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
     }
 
     try:
-        logging.info(f"Fetching price from: {url}")
+        logging.info(f"Scraping price from: {url}")
         response = requests.get(url, headers=headers, timeout=20)
         response.raise_for_status()
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Comprehensive list of price selectors for Amazon.in (updated 2026)
-        price_selectors = [
-            '#corePrice_feature_div .a-offscreen',                # Primary modern price
-            '#corePriceDisplay_feature_div .a-offscreen',         # Variant 1
-            '.a-price .a-offscreen',                              # Common fallback
-            '.a-price-whole',                                     # Whole part (combine with fraction)
-            'span.a-price-whole + span.a-price-fraction',         # Whole + decimal
-            '#priceblock_ourprice',                               # Older product pages
-            '#priceblock_dealprice',                              # Deal price
-            '.a-price-symbol + .a-price-whole',                   # Symbol + whole
-            'span.apexPriceToPay',                                # Apex price block
+        # 2026-updated selectors for Amazon.in (tested on real pages)
+        selectors = [
+            'span.a-price-whole',                              # Whole rupees
+            'span.a-price-fraction',                           # Paise (decimal)
+            '#corePrice_feature_div span.a-offscreen',         # Primary modern price
+            '#corePriceDisplay_feature_div span.a-offscreen',  # Variant
+            '.a-price span.a-offscreen',                       # Common fallback
+            '#priceblock_ourprice',                            # Older pages
+            '#priceblock_dealprice',                           # Deal price
+            'span.apexPriceToPay',                             # Apex block
+            '.a-price-symbol + span.a-price-whole',            # Symbol + whole
         ]
 
-        price_elem = None
-        for selector in price_selectors:
-            price_elem = soup.select_one(selector)
-            if price_elem:
-                logging.debug(f"Found price using selector: {selector}")
-                break
+        price_whole = None
+        price_fraction = None
 
-        if not price_elem:
-            # Last resort: search for any text that looks like ₹ followed by number
-            price_match = re.search(r'₹[\d,]+(?:\.\d+)?', response.text)
-            if price_match:
-                price_text = price_match.group(0).replace('₹', '').replace(',', '')
-                logging.warning("Used regex fallback to find price")
-            else:
-                logging.error("No price element or pattern found on page")
-                logging.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
-                logging.debug(f"First 300 chars: {response.text[:300]}...")
-                raise ValueError("Could not locate price on Amazon page")
-        else:
-            price_text = price_elem.get_text(strip=True).replace('₹', '').replace(',', '').strip()
+        # First try structured selectors
+        for sel in selectors:
+            elem = soup.select_one(sel)
+            if elem:
+                text = elem.get_text(strip=True)
+                if 'whole' in sel or 'whole' in elem.get('class', []):
+                    price_whole = text
+                elif 'fraction' in sel or 'fraction' in elem.get('class', []):
+                    price_fraction = text
+                else:
+                    # Full price in one element
+                    full_text = text.replace('₹', '').replace(',', '').strip()
+                    if full_text.replace('.', '').isdigit():
+                        price = float(full_text)
+                        logging.info(f"Found full price: ₹{price}")
+                        return price
 
-        # Handle cases where whole and fraction are separate
-        fraction_elem = price_elem.find_next('span', class_='a-price-fraction') if price_elem else None
-        if fraction_elem and '.' not in price_text:
-            fraction = fraction_elem.get_text(strip=True)
-            price_text += '.' + fraction.zfill(2)  # Ensure two decimal places
-
-        # Final clean-up and conversion
-        price_text = re.sub(r'[^\d.]', '', price_text)  # Remove any leftover non-numeric chars
-        try:
+        # Combine whole + fraction if found separately
+        if price_whole and price_fraction:
+            price_text = f"{price_whole}.{price_fraction.zfill(2)}"
             price = float(price_text)
-            if price <= 0:
-                raise ValueError("Price is zero or negative")
-        except ValueError as ve:
-            logging.error(f"Price conversion failed: '{price_text}' → {str(ve)}")
-            raise ValueError(f"Invalid price format: {price_text}")
+            logging.info(f"Combined price: ₹{price}")
+            return price
 
-        logging.info(f"Successfully scraped price: ₹{price:.2f}")
-        return price
+        # Fallback: regex search in entire page (very reliable)
+        price_match = re.search(r'₹[\s]*?([\d,]+(?:\.\d{1,2})?)', response.text)
+        if price_match:
+            price_text = price_match.group(1).replace(',', '')
+            price = float(price_text)
+            logging.info(f"Regex fallback found price: ₹{price}")
+            return price
+
+        # If nothing works
+        logging.error(f"No price found on {url}")
+        logging.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
+        raise ValueError("Could not locate price on Amazon page")
 
     except requests.Timeout:
-        logging.error(f"Timeout while fetching {url}")
-        raise Exception("Request timed out while fetching Amazon page")
+        logging.error(f"Timeout fetching {url}")
+        raise Exception("Request timed out")
     except requests.RequestException as e:
-        logging.error(f"Network/HTTP error for {url}: {str(e)}")
-        raise Exception(f"Failed to fetch page: {str(e)}")
+        logging.error(f"Request failed for {url}: {str(e)}")
+        raise Exception(f"Failed to load page: {str(e)}")
+    except ValueError as e:
+        logging.error(f"Price parsing error: {str(e)}")
+        raise
     except Exception as e:
-        logging.exception(f"Unexpected error while checking price for {url}")
+        logging.exception(f"Unexpected error for {url}")
         raise
 
 
@@ -98,17 +99,14 @@ def check_price(url):
 # ────────────────────────────────────────────────
 
 def send_email(to_email, subject, body_text, body_html=None):
-    """
-    Send email using Brevo (formerly Sendinblue) API
-    """
     api_key = os.getenv('BREVO_API_KEY')
     from_email = os.getenv('BREVO_FROM_EMAIL')
 
     if not api_key:
-        logging.error("BREVO_API_KEY not found in environment variables")
+        logging.error("BREVO_API_KEY missing")
         raise ValueError("Brevo API key is missing")
     if not from_email:
-        logging.error("BREVO_FROM_EMAIL not found in environment variables")
+        logging.error("BREVO_FROM_EMAIL missing")
         raise ValueError("Brevo from email is missing")
 
     headers = {
@@ -136,15 +134,15 @@ def send_email(to_email, subject, body_text, body_html=None):
         )
 
         if response.status_code in (200, 201, 202):
-            logging.info(f"Email successfully sent to {to_email}")
+            logging.info(f"Email sent to {to_email}")
             return True
         else:
-            error_msg = f"Brevo API error ({response.status_code}): {response.text}"
+            error_msg = f"Brevo error ({response.status_code}): {response.text}"
             logging.error(error_msg)
             raise Exception(error_msg)
 
     except requests.RequestException as e:
-        logging.error(f"Network error sending email: {str(e)}")
+        logging.error(f"Email network error: {str(e)}")
         raise
 
 
@@ -153,49 +151,47 @@ def send_welcome_email(to_email, product_url):
     body_text = f"""
 Thank you for using Amazon Price Tracker!
 
-We have successfully added the following product to our tracking system:
-{product_url}
+Product added: {product_url}
 
-You will receive email notifications when the price changes.
+You'll get alerts when the price changes.
 
 Best regards,
 Amazon Price Tracker Team
     """
     body_html = f"""
-    <h2>Welcome to Amazon Price Tracker!</h2>
-    <p>Thank you for adding:</p>
-    <p><a href="{product_url}">{product_url}</a></p>
-    <p>You will be notified when the price changes.</p>
+    <h2>Welcome!</h2>
+    <p>Product added: <a href="{product_url}">{product_url}</a></p>
+    <p>Price change alerts coming your way.</p>
     <p>Best regards,<br>Amazon Price Tracker Team</p>
     """
 
-    return send_email(to_email, subject, body_text, body_html)
+    send_email(to_email, subject, body_text, body_html)
 
 
 def send_price_alert(to_email, product_url, old_price, new_price, min_price=None, max_price=None):
-    threshold_message = ""
+    threshold_msg = ""
     if min_price is not None and new_price <= min_price:
-        threshold_message += f"\nThe price has dropped below your minimum threshold of ₹{min_price:.2f}!"
+        threshold_msg += f"\nDropped below your min: ₹{min_price:.2f}!"
     if max_price is not None and new_price >= max_price:
-        threshold_message += f"\nThe price has exceeded your maximum threshold of ₹{max_price:.2f}!"
+        threshold_msg += f"\nExceeded your max: ₹{max_price:.2f}!"
 
     subject = "Amazon Price Alert!"
     body_text = f"""
-Price changed for your tracked product!
+Price changed!
 
-Product URL: {product_url}
-Old Price: ₹{old_price:.2f}
-New Price: ₹{new_price:.2f}{threshold_message}
+URL: {product_url}
+Old: ₹{old_price:.2f}
+New: ₹{new_price:.2f}{threshold_msg}
 
-Check it out now!
+Check now!
     """
     body_html = f"""
     <h2>Price Alert!</h2>
-    <p>Product: <a href="{product_url}">{product_url}</a></p>
-    <p>Old Price: ₹{old_price:.2f}</p>
-    <p><strong>New Price: ₹{new_price:.2f}</strong></p>
-    {f'<p><strong>{threshold_message.strip()}</strong></p>' if threshold_message else ''}
-    <p>Check it now!</p>
+    <p><a href="{product_url}">{product_url}</a></p>
+    <p>Old: ₹{old_price:.2f}</p>
+    <p><strong>New: ₹{new_price:.2f}</strong></p>
+    {f'<p><strong>{threshold_msg.strip()}</strong></p>' if threshold_msg else ''}
+    <p>Check now!</p>
     """
 
-    return send_email(to_email, subject, body_text, body_html)
+    send_email(to_email, subject, body_text, body_html)

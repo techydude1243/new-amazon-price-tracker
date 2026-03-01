@@ -71,8 +71,8 @@ requests==2.32.3
 
 # Scraping & browser automation
 beautifulsoup4==4.13.3
-selenium==4.29.0
-webdriver-manager==4.0.2
+# selenium==4.29.0
+# webdriver-manager==4.0.2
 
 # Scheduler for background price checks
 schedule==1.2.1
