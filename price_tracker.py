@@ -3,6 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 import logging
 import re
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -15,13 +18,12 @@ def check_price(url):
         logging.error("SCRAPERAPI_KEY not found")
         raise ValueError("ScraperAPI key is missing")
 
-    # ScraperAPI base URL
     scraper_url = "http://api.scraperapi.com"
     params = {
         'api_key': api_key,
         'url': url,
-        'render': 'false',  # Set to 'true' if page needs JavaScript (costs 10 credits)
-        'premium': 'true',  # Optional: better proxies for Amazon (costs more credits)
+        'render': 'false',
+        'premium': 'true',
     }
 
     try:
@@ -31,7 +33,6 @@ def check_price(url):
 
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Current selectors for Amazon.in (2026 layouts)
         price_elem = soup.select_one('#corePrice_feature_div .a-offscreen') or \
                      soup.select_one('.a-price .a-offscreen') or \
                      soup.select_one('span.a-price-whole') or \
@@ -39,7 +40,6 @@ def check_price(url):
                      soup.select_one('span.apexPriceToPay')
 
         if not price_elem:
-            # Fallback regex if selectors fail
             price_match = re.search(r'₹[\s]*?([\d,]+(?:\.\d{1,2})?)', response.text)
             if price_match:
                 price_text = price_match.group(1).replace(',', '')
@@ -49,7 +49,6 @@ def check_price(url):
         else:
             price_text = price_elem.get_text(strip=True).replace('₹', '').replace(',', '').strip()
 
-        # Handle decimal part if separate
         fraction = soup.select_one('span.a-price-fraction')
         if fraction and '.' not in price_text:
             price_text += '.' + fraction.get_text(strip=True).zfill(2)
@@ -68,55 +67,47 @@ def check_price(url):
         logging.exception(f"Unexpected ScraperAPI error")
         raise
 
+
 # ────────────────────────────────────────────────
-#           Brevo API Email Sending Functions
+#           Gmail SMTP Email Sending Functions
 # ────────────────────────────────────────────────
 
 def send_email(to_email, subject, body_text, body_html=None):
-    api_key = os.getenv('BREVO_API_KEY')
-    from_email = os.getenv('BREVO_FROM_EMAIL')
+    smtp_host = "smtp.gmail.com"
+    smtp_port = 587
+    smtp_user = os.getenv('GMAIL_USER')
+    smtp_pass = os.getenv('GMAIL_APP_PASSWORD')
+    from_email = smtp_user
 
-    if not api_key:
-        logging.error("BREVO_API_KEY missing")
-        raise ValueError("Brevo API key is missing")
-    if not from_email:
-        logging.error("BREVO_FROM_EMAIL missing")
-        raise ValueError("Brevo from email is missing")
-
-    headers = {
-        'accept': 'application/json',
-        'api-key': api_key,
-        'content-type': 'application/json'
-    }
-
-    payload = {
-        "sender": {"name": "Amazon Price Tracker", "email": from_email},
-        "to": [{"email": to_email}],
-        "subject": subject,
-        "textContent": body_text,
-    }
-
-    if body_html:
-        payload["htmlContent"] = body_html
+    if not smtp_user or not smtp_pass:
+        logging.error("Gmail SMTP credentials missing")
+        raise ValueError("Gmail user or App Password not set")
 
     try:
-        response = requests.post(
-            "https://api.brevo.com/v3/smtp/email",
-            json=payload,
-            headers=headers,
-            timeout=15
-        )
+        msg = MIMEMultipart('alternative')
+        msg['From'] = f"Amazon Price Tracker <{from_email}>"
+        msg['To'] = to_email
+        msg['Subject'] = subject
 
-        if response.status_code in (200, 201, 202):
-            logging.info(f"Email sent to {to_email}")
-            return True
-        else:
-            error_msg = f"Brevo error ({response.status_code}): {response.text}"
-            logging.error(error_msg)
-            raise Exception(error_msg)
+        msg.attach(MIMEText(body_text, 'plain'))
 
-    except requests.RequestException as e:
-        logging.error(f"Email network error: {str(e)}")
+        if body_html:
+            msg.attach(MIMEText(body_html, 'html'))
+
+        server = smtplib.SMTP(smtp_host, smtp_port)
+        server.starttls()
+        server.login(smtp_user, smtp_pass)
+        server.send_message(msg)
+        server.quit()
+
+        logging.info(f"Gmail email sent to {to_email}")
+        return True
+
+    except smtplib.SMTPAuthenticationError:
+        logging.error("Gmail authentication failed - check App Password")
+        raise
+    except Exception as e:
+        logging.error(f"Gmail SMTP error: {str(e)}")
         raise
 
 
@@ -133,9 +124,9 @@ Best regards,
 Amazon Price Tracker Team
     """
     body_html = f"""
-    <h2>Welcome!</h2>
+    <h2>Welcome to Amazon Price Tracker!</h2>
     <p>Product added: <a href="{product_url}">{product_url}</a></p>
-    <p>Price change alerts coming your way.</p>
+    <p>You'll be notified on price changes.</p>
     <p>Best regards,<br>Amazon Price Tracker Team</p>
     """
 
@@ -145,9 +136,9 @@ Amazon Price Tracker Team
 def send_price_alert(to_email, product_url, old_price, new_price, min_price=None, max_price=None):
     threshold_msg = ""
     if min_price is not None and new_price <= min_price:
-        threshold_msg += f"\nDropped below your min: ₹{min_price:.2f}!"
+        threshold_msg += f"\nDropped below min ₹{min_price:.2f}!"
     if max_price is not None and new_price >= max_price:
-        threshold_msg += f"\nExceeded your max: ₹{max_price:.2f}!"
+        threshold_msg += f"\nExceeded max ₹{max_price:.2f}!"
 
     subject = "Amazon Price Alert!"
     body_text = f"""
