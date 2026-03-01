@@ -3,12 +3,8 @@ import logging
 from flask import Flask, render_template, request, jsonify, flash
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.orm import DeclarativeBase
-from dotenv import load_dotenv
 from price_tracker import check_price, send_email, send_welcome_email
 import re
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -23,9 +19,11 @@ app = Flask(__name__)
 # Set secret key for session management
 app.secret_key = os.getenv("SESSION_SECRET", "your-fallback-secret-key")
 
-# Configure PostgreSQL database
+# Database configuration – force SQLite on PythonAnywhere free tier
+# Do NOT fallback to PostgreSQL (localhost:5432) – it doesn't exist there
 app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL", "postgresql://postgres:123456@localhost:5432/amazon_tracker"
+    "DATABASE_URL",
+    "sqlite:////home/krishnx17/new-amazon-price-tracker/prices.db"  # ← change username if different
 )
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
@@ -33,16 +31,20 @@ app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
 }
 
-# Removed Gmail / old SMTP config - Brevo API is used in price_tracker.py
-# No Flask-Mail configuration needed anymore
-
 db.init_app(app)
 
 # Import models after db initialization
 from models import Product
 
-# with app.app_context():
-#     db.create_all()
+# ────────────────────────────────────────────────
+# IMPORTANT: Do NOT put db.create_all() here!
+# It runs at import time and crashes if DB config is wrong.
+# Run it manually ONCE in Bash console:
+# python
+# >>> from app import app, db
+# >>> with app.app_context(): db.create_all()
+# >>> exit()
+# ────────────────────────────────────────────────
 
 def validate_email(email):
     pattern = r'^[\w\.-]+@[\w\.-]+\.\w+$'
@@ -130,14 +132,14 @@ def clear_all():
         flash('Error clearing products', 'error')
         return jsonify({'success': False})
 
-# Optional: Keep test route (updated to use new send_email)
+# Optional: Keep test route
 @app.route('/test-email')
 def test_email():
     try:
         send_email(
-            to_email="your-email@gmail.com",  # ← change to your test email
-            subject="Test Email from Brevo API",
-            body_text="This is a test email from your Amazon Price Tracker using Brevo API!"
+            to_email="k.tripathi2080@gmail.com",  # ← your email for testing
+            subject="Test Email from Amazon Price Tracker",
+            body_text="This is a test email from your deployed app!"
         )
         logging.info("Test email sent successfully!")
         return "Test email sent successfully!"
