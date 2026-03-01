@@ -1,49 +1,77 @@
 import os
 import requests
 from bs4 import BeautifulSoup
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 import logging
-from webdriver_manager.chrome import ChromeDriverManager
+
 logging.basicConfig(level=logging.DEBUG)
 
-# Function to check price using Selenium for dynamic content
 def check_price(url):
-    options = Options()
-    options.add_argument('--headless')
-    options.add_argument('--disable-gpu')
-    options.add_argument('--no-sandbox')
-    options.add_argument('--disable-dev-shm-usage')
-
-    # service = Service('K:\\amazon-price-tracker\\chromedriver.exe')
-    # driver = webdriver.Chrome(service=service, options=options)
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
+    """
+    Fetch Amazon product price using requests + BeautifulSoup
+    No Selenium → works on PythonAnywhere free tier
+    """
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Referer': 'https://www.google.com/',
+    }
 
     try:
-        driver.get(url)
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
 
-        # Wait for the price element to load
-        price_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, '.a-price-whole'))
-        )
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        price_text = price_element.text.replace(',', '').strip()
-        price = float(price_text)
+        # Try multiple common Amazon price selectors (2025–2026 layouts)
+        selectors = [
+            '.a-price-whole',                     # Main price whole part
+            '#corePrice_feature_div .a-offscreen', # Modern price block
+            '.a-price .a-offscreen',              # Alternative price
+            '#priceblock_ourprice',               # Older layout
+            '.a-price-symbol + .a-price-whole',   # Symbol + whole
+            'span.a-price',                       # General price container
+        ]
 
-        logging.info(f"Price found: ₹{price}")
+        price_element = None
+        for sel in selectors:
+            price_element = soup.select_one(sel)
+            if price_element:
+                break
+
+        if not price_element:
+            logging.error(f"No price element found on {url}")
+            logging.debug(f"Page title: {soup.title.string if soup.title else 'No title'}")
+            raise ValueError("Could not locate price on Amazon page")
+
+        # Clean and parse price
+        price_text = price_element.get_text(strip=True)
+        price_text = price_text.replace('₹', '').replace(',', '').replace(' ', '').strip()
+
+        # Sometimes price has decimal part in separate span
+        if '.' not in price_text and price_element.find_next('span', class_='a-price-fraction'):
+            fraction = price_element.find_next('span', class_='a-price-fraction').get_text(strip=True)
+            price_text += '.' + fraction
+
+        try:
+            price = float(price_text)
+        except ValueError:
+            logging.error(f"Could not convert price text to float: '{price_text}'")
+            raise ValueError("Invalid price format")
+
+        logging.info(f"Price found for {url}: ₹{price}")
         return price
 
+    except requests.RequestException as e:
+        logging.error(f"Request failed for {url}: {str(e)}")
+        raise
+    except ValueError as e:
+        logging.error(f"Price parsing error for {url}: {str(e)}")
+        raise
     except Exception as e:
-        logging.error(f"Error checking price: {str(e)}")
+        logging.error(f"Unexpected error checking price for {url}: {str(e)}")
         raise
 
-    finally:
-        driver.quit()
 
 # ────────────────────────────────────────────────
 #           Brevo API Email Sending Function
@@ -54,7 +82,7 @@ def send_email(to_email, subject, body_text, body_html=None):
     Send email using Brevo (Sendinblue) API
     """
     api_key = os.getenv('BREVO_API_KEY')
-    from_email = os.getenv('BREVO_FROM_EMAIL')  # must be a verified sender in Brevo
+    from_email = os.getenv('BREVO_FROM_EMAIL')
 
     if not api_key:
         logging.error("BREVO_API_KEY not found in environment variables")
@@ -70,10 +98,7 @@ def send_email(to_email, subject, body_text, body_html=None):
     }
 
     payload = {
-        "sender": {
-            "name": "Amazon Price Tracker",
-            "email": from_email
-        },
+        "sender": {"name": "Amazon Price Tracker", "email": from_email},
         "to": [{"email": to_email}],
         "subject": subject,
         "textContent": body_text,
@@ -101,6 +126,7 @@ def send_email(to_email, subject, body_text, body_html=None):
         logging.error(f"Network error sending email: {str(e)}")
         raise
 
+
 # Function to send welcome email
 def send_welcome_email(to_email, product_url):
     subject = "Product Tracking Confirmation"
@@ -124,6 +150,7 @@ Amazon Price Tracker Team
     """
 
     send_email(to_email, subject, body_text, body_html)
+
 
 # Function to send price change alert
 def send_price_alert(to_email, product_url, old_price, new_price, min_price=None, max_price=None):
