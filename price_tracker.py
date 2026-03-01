@@ -94,8 +94,8 @@ def send_email(to_email, subject, body_text, body_html=None):
         if body_html:
             msg.attach(MIMEText(body_html, 'html'))
 
-        server = smtplib.SMTP(smtp_host, smtp_port)
-        server.starttls()
+        server = smtplib.SMTP("smtp.gmail.com", 465)
+        # server.starttls()
         server.login(smtp_user, smtp_pass)
         server.send_message(msg)
         server.quit()
